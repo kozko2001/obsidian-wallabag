@@ -1,5 +1,7 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownView, MetadataCache, Modal, Notice, Plugin, PluginSettingTab, Setting, Vault } from 'obsidian';
 import { NodeHtmlMarkdown, NodeHtmlMarkdownOptions } from 'node-html-markdown'
+import path from 'path';
+import sanitize from 'sanitize-filename';
 import { Secret } from './secret';
 // Remember to rename these classes and interfaces!
 
@@ -31,11 +33,11 @@ type WallabagEntriesPaginationResponse = {
   page: number;
   pages: number;
   _embedded: {
-    items: WallabagEntriesResponse[]
+    items: WallabagEntry[]
   }
 }
 
-type WallabagEntriesResponse = {
+type WallabagEntry = {
   is_archived: 0 | 1;
   is_starred: 0 | 1;
   tags: string[];
@@ -51,11 +53,46 @@ function isResponseError(result: any): result is AuthResponseError {
   return typeof result === 'object' && typeof result.error === 'string'
 }
 
-function toMarkdown(entry: WallabagEntriesResponse): WallabagEntriesResponse {
+function toMarkdown(entry: WallabagEntry): WallabagEntry {
   return {
     ...entry,
     content: NodeHtmlMarkdown.translate(entry.content),
   }
+}
+
+class WallabagFileManager {
+  constructor(private vault: Vault, private metadataCache: MetadataCache) { }
+
+  async sync(entry: WallabagEntry) {
+    const files: string[] = this.vault.getMarkdownFiles().map(f => f.path)
+    const path = this.filePath(entry)
+
+    const alreadyExist = files.some(p => p === path)
+
+    if (alreadyExist) {
+      console.log("should update...")
+    } else {
+      console.log('creating entry for ', entry);
+      await this.createFile(path, entry)
+    }
+  }
+
+  async createFile(file: string, entry: WallabagEntry) {
+    console.log('path', file)
+
+    await this.vault.create(file, entry.content);
+  }
+
+  filePath(entry: WallabagEntry): string {
+    const folder = "wallabag/"
+    let filename: string = sanitize(entry.title)
+    if(filename.length > 190) {
+      filename = filename.slice(0, 190);
+    }
+
+    return path.join(folder, `${filename}.md`)
+  }
+
 }
 
 class WallabagAPI {
@@ -94,7 +131,7 @@ class WallabagAPI {
     return data
   }
 
-  async fetchEntries(auth: AuthResponseSuccess): Promise<WallabagEntriesResponse[]> {
+  async fetchEntries(auth: AuthResponseSuccess): Promise<WallabagEntry[]> {
     const domain = 'wallabag.coscolla.net';
     const url = `https://${domain}/api/entries.json`;
 
@@ -133,15 +170,23 @@ export default class MyPlugin extends Plugin {
     this.addCommand({
       id: 'wallabag-open-sample-modal-simple',
       name: 'wallabag simple model',
-      callback: () => {
+      callback: async () => {
         const secrets = new Secret()
         const api = new WallabagAPI(secrets.clientId, secrets.clientSecret, secrets.username, secrets.password)
 
-        api.auth()
+        const entries = await api.auth()
           .then(api.fetchEntries)
           .then(entries => entries.filter(entry => entry.is_archived == 0))
-          .then(entries => entries.map(toMarkdown))
-          .then(filtered => { console.log(filtered) });
+          .then(entries => entries.map(toMarkdown));
+
+        Promise.all(entries.map((entry) => {
+          console.log(entry);
+          const fileManager = new WallabagFileManager(this.app.vault, this.app.metadataCache);
+
+          fileManager.sync(entry)
+            .then(() => console.log("file created?"))
+            .catch(x => console.log("error", x))
+        }))
 
 
         new SampleModal(this.app).open();
