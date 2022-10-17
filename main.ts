@@ -1,4 +1,5 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { NodeHtmlMarkdown, NodeHtmlMarkdownOptions } from 'node-html-markdown'
 import { Secret } from './secret';
 // Remember to rename these classes and interfaces!
 
@@ -48,6 +49,13 @@ type WallabagEntriesResponse = {
 
 function isResponseError(result: any): result is AuthResponseError {
   return typeof result === 'object' && typeof result.error === 'string'
+}
+
+function toMarkdown(entry: WallabagEntriesResponse): WallabagEntriesResponse {
+  return {
+    ...entry,
+    content: NodeHtmlMarkdown.translate(entry.content),
+  }
 }
 
 class WallabagAPI {
@@ -132,6 +140,7 @@ export default class MyPlugin extends Plugin {
         api.auth()
           .then(api.fetchEntries)
           .then(entries => entries.filter(entry => entry.is_archived == 0))
+          .then(entries => entries.map(toMarkdown))
           .then(filtered => { console.log(filtered) });
 
 
