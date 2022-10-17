@@ -1,7 +1,8 @@
-import { App, Editor, MarkdownView, MetadataCache, Modal, Notice, Plugin, PluginSettingTab, Setting, Vault } from 'obsidian';
+import { App, Editor, MarkdownView, MetadataCache, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, Vault } from 'obsidian';
 import { NodeHtmlMarkdown, NodeHtmlMarkdownOptions } from 'node-html-markdown'
 import path from 'path';
 import sanitize from 'sanitize-filename';
+import * as matter from 'gray-matter';
 import { Secret } from './secret';
 // Remember to rename these classes and interfaces!
 
@@ -64,33 +65,37 @@ class WallabagFileManager {
   constructor(private vault: Vault, private metadataCache: MetadataCache) { }
 
   async sync(entry: WallabagEntry) {
-    const files: string[] = this.vault.getMarkdownFiles().map(f => f.path)
+    const files: TFile[] = this.vault.getMarkdownFiles()
     const path = this.filePath(entry)
 
-    const alreadyExist = files.some(p => p === path)
+    const existingFile: TFile | undefined = files.find(p => p.path === path)
+    const content = this.content(entry)
 
-    if (alreadyExist) {
-      console.log("should update...")
+    if (existingFile) {
+      await this.vault.modify(existingFile, content)
     } else {
-      console.log('creating entry for ', entry);
-      await this.createFile(path, entry)
+      await this.vault.create(path, content);
     }
-  }
-
-  async createFile(file: string, entry: WallabagEntry) {
-    console.log('path', file)
-
-    await this.vault.create(file, entry.content);
   }
 
   filePath(entry: WallabagEntry): string {
     const folder = "wallabag/"
     let filename: string = sanitize(entry.title)
-    if(filename.length > 190) {
+    if (filename.length > 190) {
       filename = filename.slice(0, 190);
     }
 
     return path.join(folder, `${filename}.md`)
+  }
+
+  content(entry: WallabagEntry): string {
+    return matter.stringify(entry.content, {
+      title: entry.title,
+      url: entry.url,
+      starred: entry.is_starred,
+      tags: entry.tags,
+      to_read: entry.tags.includes("TO_READ")
+    });
   }
 
 }
