@@ -25,6 +25,27 @@ export type AuthResponseSuccess = {
 
 type AuthResponse = AuthResponseError | AuthResponseSuccess
 
+type WallabagEntriesPaginationResponse = {
+  limit: number;
+  page: number;
+  pages: number;
+  _embedded: {
+    items: WallabagEntriesResponse[]
+  }
+}
+
+type WallabagEntriesResponse = {
+  is_archived: 0 | 1;
+  is_starred: 0 | 1;
+  tags: string[];
+  title: string;
+  url: string;
+  created_at: string;
+  domain: string;
+  id: number;
+  content: string;
+}
+
 function isResponseError(result: any): result is AuthResponseError {
   return typeof result === 'object' && typeof result.error === 'string'
 }
@@ -36,6 +57,7 @@ class WallabagAPI {
     private username: string,
     private password: string,
   ) { }
+
   async auth() {
     const body = {
       grant_type: 'password',
@@ -44,8 +66,8 @@ class WallabagAPI {
       username: this.username,
       password: this.password,
     }
-
     const domain = 'wallabag.coscolla.net';
+
     const url = `https://${domain}/oauth/v2/token`;
 
     const response = await fetch(url, {
@@ -58,11 +80,25 @@ class WallabagAPI {
 
     if (isResponseError(data)) {
       console.log("error...", data.error_description)
-    } else {
-      console.log('success!', data)
+      throw new Error(data.error_description);
     }
 
+    return data
+  }
+
+  async fetchEntries(auth: AuthResponseSuccess): Promise<WallabagEntriesResponse[]> {
+    const domain = 'wallabag.coscolla.net';
+    const url = `https://${domain}/api/entries.json`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${auth.access_token}` }
+    });
+
+    const data = await response.json() as WallabagEntriesPaginationResponse
     console.log(data)
+
+    return data._embedded.items;
   }
 }
 
@@ -93,7 +129,12 @@ export default class MyPlugin extends Plugin {
         const secrets = new Secret()
         const api = new WallabagAPI(secrets.clientId, secrets.clientSecret, secrets.username, secrets.password)
 
-        api.auth().then(() => { console.log('done') });
+        api.auth()
+          .then(api.fetchEntries)
+          .then(entries => entries.filter(entry => entry.is_archived == 0))
+          .then(filtered => { console.log(filtered) });
+
+
         new SampleModal(this.app).open();
       }
     });
